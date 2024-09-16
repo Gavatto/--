@@ -1,13 +1,11 @@
 from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey
-from sqlalchemy.orm import relationship, sessionmaker
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.ext.declarative import declarative_base
-from datetime import date  # Імпорт класу date
+from sqlalchemy.orm import sessionmaker, relationship, declarative_base
+from datetime import date
 
 # Базовий клас для моделі
 Base = declarative_base()
 
-# Модель Пацієнт
+# Модель Пацієнт (зберігається в центральній базі)
 class Patient(Base):
     __tablename__ = 'patients'
     id = Column(Integer, primary_key=True)
@@ -19,40 +17,30 @@ class Patient(Base):
     email = Column(String)
     phone = Column(String)
 
-    evacuation_stages = relationship('EvacuationStage', back_populates='patient')
-
-# Модель Етап евакуації
+# Модель Етап евакуації (може бути розподілена між вузлами)
 class EvacuationStage(Base):
     __tablename__ = 'evacuation_stages'
     id = Column(Integer, primary_key=True)
     stage_name = Column(String)
-    start_date = Column(Date)  # Поле дати
-    end_date = Column(Date)    # Поле дати
+    start_date = Column(Date)
+    end_date = Column(Date)
     patient_id = Column(Integer, ForeignKey('patients.id'))
 
-    patient = relationship('Patient', back_populates='evacuation_stages')
-    documents = relationship('Documentation', back_populates='evacuation_stage')
+# Підключення до центральної бази даних (наприклад, для пацієнтів)
+central_engine = create_engine('postgresql://user:password@central_server/central_db')
+CentralSession = sessionmaker(bind=central_engine)
+central_session = CentralSession()
 
-# Модель Документація
-class Documentation(Base):
-    __tablename__ = 'documents'
-    id = Column(Integer, primary_key=True)
-    doc_type = Column(String)
-    created_date = Column(Date)  # Поле дати
-    description = Column(String)
-    evacuation_stage_id = Column(Integer, ForeignKey('evacuation_stages.id'))
+# Підключення до локальної бази даних (наприклад, для стабілізаційного пункту)
+local_engine = create_engine('postgresql://user:password@local_server/local_db')
+LocalSession = sessionmaker(bind=local_engine)
+local_session = LocalSession()
 
-    evacuation_stage = relationship('EvacuationStage', back_populates='documents')
+# Створення таблиць в обох базах даних
+Base.metadata.create_all(central_engine)  # Створення в центральній базі
+Base.metadata.create_all(local_engine)    # Створення в локальній базі
 
-# Підключення до бази даних SQLite
-engine = create_engine('sqlite:///evacuation.db')
-Base.metadata.create_all(engine)
-
-# Створення сесії для взаємодії з базою даних
-Session = sessionmaker(bind=engine)
-session = Session()
-
-# Приклад додавання нового пацієнта, етапу та документа
+# Приклад роботи з даними
 new_patient = Patient(
     first_name="Іван",
     last_name="Петров",
@@ -63,25 +51,17 @@ new_patient = Patient(
     phone="+380123456789"
 )
 
+# Додаємо пацієнта до центральної бази даних
+central_session.add(new_patient)
+central_session.commit()
+
+# Додаємо етап евакуації до локальної бази даних
 new_stage = EvacuationStage(
     stage_name="Стабілізаційний пункт",
-    start_date=date(2024, 9, 10),  # Використовуємо об'єкт date
-    end_date=date(2024, 9, 12),    # Використовуємо об'єкт date
-    patient=new_patient
+    start_date=date(2024, 9, 10),
+    end_date=date(2024, 9, 12),
+    patient_id=new_patient.id  # Використовуємо ID з центральної бази
 )
 
-new_document = Documentation(
-    doc_type="Огляд",
-    created_date=date(2024, 9, 10),  # Використовуємо об'єкт date
-    description="Первинний огляд пораненого",
-    evacuation_stage=new_stage
-)
-
-# Збереження даних в базі
-session.add(new_patient)
-session.add(new_stage)
-session.add(new_document)
-session.commit()
-
-# Закриття сесії
-session.close()
+local_session.add(new_stage)
+local_session.commit()
